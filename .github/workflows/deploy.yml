@@ -2,10 +2,10 @@ name: Deploy Release APK
 
 on:
   push:
-    tags:
-      - "v*"
     branches:
       - main
+    tags:
+      - "v*"
   release:
     types: [created]
   workflow_dispatch:
@@ -34,6 +34,11 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          build-tools: "34.0.0"
+          ndk: "26.1.10909125"
+          cmake: "3.22.1"
 
       - name: Install npm dependencies
         working-directory: Frontend
@@ -50,34 +55,70 @@ jobs:
             -keyalg RSA \
             -keysize 2048 \
             -validity 100000 \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -storepass android \
+            -keypass android \
             -dname "CN=MiniLedger, OU=Development, O=MiniLedger, L=NA, S=NA, C=US"
 
       - name: Configure gradle.properties for signing
         run: |
-          echo "MYAPP_RELEASE_STORE_FILE=release-key.keystore" >> Frontend/android/gradle.properties
-          echo "MYAPP_RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> Frontend/android/gradle.properties
-          echo "MYAPP_RELEASE_KEY_ALIAS=miniledger" >> Frontend/android/gradle.properties
-          echo "MYAPP_RELEASE_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> Frontend/android/gradle.properties
-
-      - name: Configure build.gradle for minify and shrink
-        run: |
-          sed -i 's/def enableProguardInReleaseBuilds = false/def enableProguardInReleaseBuilds = true/' Frontend/android/app/build.gradle
-          sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/' Frontend/android/app/build.gradle
-          sed -i 's/proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")/minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")/' Frontend/android/app/build.gradle
+          cat >> Frontend/android/gradle.properties << 'EOF'
+MYAPP_RELEASE_STORE_FILE=release-key.keystore
+MYAPP_RELEASE_STORE_PASSWORD=android
+MYAPP_RELEASE_KEY_ALIAS=miniledger
+MYAPP_RELEASE_KEY_PASSWORD=android
+EOF
 
       - name: Add release signing config to build.gradle
         run: |
-          sed -i '/signingConfigs {/,/}/ {
-            /}/i\
-        release {\
-            storeFile file("release-key.keystore")\
-            storePassword System.getenv("MYAPP_RELEASE_STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")\
-            keyAlias "miniledger"\
-            keyPassword System.getenv("MYAPP_RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")\
+          python3 << 'PYEOF'
+          import re
+
+          filepath = "Frontend/android/app/build.gradle"
+          with open(filepath, "r") as f:
+              content = f.read()
+
+          # Add release signingConfig inside signingConfigs block
+          release_block = '''    release {
+            storeFile file(MYAPP_RELEASE_STORE_FILE)
+            storePassword MYAPP_RELEASE_STORE_PASSWORD
+            keyAlias MYAPP_RELEASE_KEY_ALIAS
+            keyPassword MYAPP_RELEASE_KEY_PASSWORD
         }
-          }' Frontend/android/app/build.gradle
+'''
+          # Insert release config right after "signingConfigs {"
+          content = content.replace(
+              'signingConfigs {\n',
+              'signingConfigs {\n' + release_block
+          )
+
+          # Switch release buildType to use release signingConfig
+          content = content.replace(
+              'signingConfig signingConfigs.debug',
+              'signingConfig signingConfigs.release'
+          )
+
+          # Enable minify and shrink resources
+          content = content.replace(
+              'minifyEnabled enableProguardInReleaseBuilds',
+              'minifyEnabled true\n            shrinkResources true'
+          )
+
+          # Ensure proguardFiles line is present
+          if 'proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' not in content:
+              content = content.replace(
+                  'minifyEnabled true\n            shrinkResources true',
+                  'minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"'
+              )
+
+          with open(filepath, "w") as f:
+              f.write(content)
+
+          print("build.gradle updated successfully")
+          PYEOF
+
+      - name: Print modified signingConfigs section
+        run: |
+          grep -A 20 'signingConfigs' Frontend/android/app/build.gradle | head -30
 
       - name: Build release APK with R8 + resource shrinking
         working-directory: Frontend/android
@@ -88,23 +129,30 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Zipalign APK
+      - name: Zipalign and sign APK
         run: |
-          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/zipalign -v -c 4 \
-            Frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk 2>/dev/null || true
-          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/zipalign -v -c 4 \
-            Frontend/android/app/build/outputs/apk/release/app-release.apk 2>/dev/null || true
+          BUILD_TOOLS=$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)
+          APK_UNSIGNED="Frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk"
+          APK_FINAL="MiniLedger.apk"
+          
+          if [ -f "$APK_UNSIGNED" ]; then
+            $ANDROID_HOME/build-tools/$BUILD_TOOLS/zipalign -v -c 4 "$APK_UNSIGNED" 2>/dev/null || \
+            $ANDROID_HOME/build-tools/$BUILD_TOOLS/zipalign -v 4 "$APK_UNSIGNED" "$APK_FINAL"
+            echo "APK_SIZE=$(du -h MiniLedger.apk | cut -f1)" >> $GITHUB_ENV
+          else
+            APK_PATH=$(find Frontend/android/app/build/outputs/apk/release -name "*.apk" -print -quit)
+            if [ -n "$APK_PATH" ]; then
+              cp "$APK_PATH" "$APK_FINAL"
+              echo "APK_SIZE=$(du -h MiniLedger.apk | cut -f1)" >> $GITHUB_ENV
+            else
+              echo "ERROR: No APK found" && exit 1
+            fi
+          fi
 
-      - name: Copy APK to workspace root
-        run: |
-          APK_PATH=$(find Frontend/android/app/build/outputs/apk/release -name "*.apk" -print -quit)
-          cp "$APK_PATH" ${{ github.workspace }}/MiniLedger.apk
-          echo "APK_SIZE=$(du -h ${{ github.workspace }}/MiniLedger.apk)" >> $GITHUB_ENV
-
-      - name: Create GitHub Release
+      - name: Upload APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ github.workspace }}/MiniLedger.apk
+          files: ./MiniLedger.apk
           name: "MiniLedger v${{ github.ref_name }}"
           body: |
             ## MiniLedger v${{ github.ref_name }}
@@ -124,7 +172,7 @@ jobs:
             - Build by: GitHub Actions
             - Commit: ${{ github.sha }}
 
-      - name: Cleanup keystore
+      - name: Cleanup
         if: always()
         run: |
           rm -f Frontend/android/app/release-key.keystore
