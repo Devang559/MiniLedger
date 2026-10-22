@@ -35,6 +35,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
+          packages: '' # Prevents trying to install the removed 'tools' package
           api-level: 34
           build-tools: "34.0.0"
           ndk: "26.1.10909125"
@@ -151,13 +152,23 @@ jobs:
             fi
           fi
 
+      - name: Get Version/Tag Name
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_NAME=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Upload APK to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.TAG_NAME }}
           files: ./MiniLedger.apk
-          name: "MiniLedger v${{ github.ref_name }}"
+          name: "MiniLedger ${{ steps.version.outputs.TAG_NAME }}"
           body: |
-            ## MiniLedger v${{ github.ref_name }}
+            ## MiniLedger ${{ steps.version.outputs.TAG_NAME }}
             
             Download and install the APK below to try the latest version.
             
