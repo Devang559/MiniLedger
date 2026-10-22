@@ -1,0 +1,130 @@
+name: Deploy Release APK
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - main
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: Frontend/package-lock.json
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm dependencies
+        working-directory: Frontend
+        run: npm ci
+
+      - name: Generate release keystore
+        run: |
+          cd Frontend/android/app
+          keytool -genkeypair \
+            -v \
+            -storetype PKCS12 \
+            -keystore release-key.keystore \
+            -alias miniledger \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 100000 \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -dname "CN=MiniLedger, OU=Development, O=MiniLedger, L=NA, S=NA, C=US"
+
+      - name: Configure gradle.properties for signing
+        run: |
+          echo "MYAPP_RELEASE_STORE_FILE=release-key.keystore" >> Frontend/android/gradle.properties
+          echo "MYAPP_RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> Frontend/android/gradle.properties
+          echo "MYAPP_RELEASE_KEY_ALIAS=miniledger" >> Frontend/android/gradle.properties
+          echo "MYAPP_RELEASE_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> Frontend/android/gradle.properties
+
+      - name: Configure build.gradle for minify and shrink
+        run: |
+          sed -i 's/def enableProguardInReleaseBuilds = false/def enableProguardInReleaseBuilds = true/' Frontend/android/app/build.gradle
+          sed -i 's/signingConfig signingConfigs.debug/signingConfig signingConfigs.release/' Frontend/android/app/build.gradle
+          sed -i 's/proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")/minifyEnabled true\n            shrinkResources true\n            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt")/' Frontend/android/app/build.gradle
+
+      - name: Add release signing config to build.gradle
+        run: |
+          sed -i '/signingConfigs {/,/}/ {
+            /}/i\
+        release {\
+            storeFile file("release-key.keystore")\
+            storePassword System.getenv("MYAPP_RELEASE_STORE_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")\
+            keyAlias "miniledger"\
+            keyPassword System.getenv("MYAPP_RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")\
+        }
+          }' Frontend/android/app/build.gradle
+
+      - name: Build release APK with R8 + resource shrinking
+        working-directory: Frontend/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease \
+            -PenableProguardInReleaseBuilds=true \
+            --no-daemon \
+            --stacktrace
+
+      - name: Zipalign APK
+        run: |
+          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/zipalign -v -c 4 \
+            Frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk 2>/dev/null || true
+          $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)/zipalign -v -c 4 \
+            Frontend/android/app/build/outputs/apk/release/app-release.apk 2>/dev/null || true
+
+      - name: Copy APK to workspace root
+        run: |
+          APK_PATH=$(find Frontend/android/app/build/outputs/apk/release -name "*.apk" -print -quit)
+          cp "$APK_PATH" ${{ github.workspace }}/MiniLedger.apk
+          echo "APK_SIZE=$(du -h ${{ github.workspace }}/MiniLedger.apk)" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ github.workspace }}/MiniLedger.apk
+          name: "MiniLedger v${{ github.ref_name }}"
+          body: |
+            ## MiniLedger v${{ github.ref_name }}
+            
+            Download and install the APK below to try the latest version.
+            
+            ### Installation
+            1. Enable "Install from Unknown Sources" on your Android device
+            2. Download the APK file
+            3. Tap on the file to install
+            
+            ### Notes
+            - When using the APK over WiFi (without USB), update the API URL in the app to your computer's local IP address
+            - APK size: ${{ env.APK_SIZE }}
+            
+            ### Build info
+            - Build by: GitHub Actions
+            - Commit: ${{ github.sha }}
+
+      - name: Cleanup keystore
+        if: always()
+        run: |
+          rm -f Frontend/android/app/release-key.keystore

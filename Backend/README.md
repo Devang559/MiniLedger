@@ -61,7 +61,7 @@ Copy `.env` (already populated with NeonDB credentials):
 
 ```
 PORT=5000
-DATABASE_URL=postgresql://neondb_owner:npg_lEF3LXsRcM4B@ep-divine-butterfly-b3siek3o-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channelBinding=require
+DATABASE_URL=postgresql://neondb_utheast-1.aws.neon.tech/neondb?sslmode=require&channelBinding=require
 OTP_EXPIRY_MINUTES=5
 ```
 

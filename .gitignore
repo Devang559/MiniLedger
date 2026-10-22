@@ -42,3 +42,15 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+# Android build artifacts
+#
+*.apk
+*.aab
+**/*.apk
+**/*.aab
+android/app/build/
+frontend/android/app/build/
+*.keystore
+!debug.keystore
+gradle.properties.local
