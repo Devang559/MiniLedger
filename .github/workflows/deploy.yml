@@ -89,18 +89,21 @@ jobs:
                       storePassword MYAPP_RELEASE_STORE_PASSWORD
                       keyAlias MYAPP_RELEASE_KEY_ALIAS
                       keyPassword MYAPP_RELEASE_KEY_PASSWORD
-                  }
-          '''
+          }
+'''
           # Insert release config right after "signingConfigs {"
-          content = content.replace(
-              'signingConfigs {\n',
-              'signingConfigs {\n' + release_block
-          )
+          if 'signingConfigs {\n' in content:
+              content = content.replace(
+                  'signingConfigs {\n',
+                  'signingConfigs {\n' + release_block
+              )
 
-          # Switch release buildType to use release signingConfig
-          content = content.replace(
-              'signingConfig signingConfigs.debug',
-              'signingConfig signingConfigs.release'
+          # Use regex to reliably switch release buildType to use release signingConfig
+          # This handles various formats: signingConfig signingConfigs.debug, signConfig signingConfigs.debug, etc.
+          content = re.sub(
+              r'(signingConfig\s+signingConfigs\.\w+)',
+              'signingConfig signingConfigs.release',
+              content
           )
 
           # Enable minify and shrink resources
@@ -122,9 +125,13 @@ jobs:
           print("build.gradle updated successfully")
           PYEOF
 
-      - name: Print modified signingConfigs section
+      - name: Verify signing config was applied
         run: |
-          grep -A 20 'signingConfigs' Frontend/android/app/build.gradle | head -30
+          echo "=== buildTypes release section ==="
+          grep -A 5 'buildTypes' Frontend/android/app/build.gradle | grep -A 3 'release'
+          echo ""
+          echo "=== signingConfig in release ==="
+          grep -A 3 'signingConfig' Frontend/android/app/build.gradle
 
       - name: Build release APK with R8 + resource shrinking
         working-directory: Frontend/android
