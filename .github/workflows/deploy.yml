@@ -62,11 +62,11 @@ jobs:
       - name: Configure gradle.properties for signing
         run: |
           cat >> Frontend/android/gradle.properties << 'EOF'
-MYAPP_RELEASE_STORE_FILE=release-key.keystore
-MYAPP_RELEASE_STORE_PASSWORD=android
-MYAPP_RELEASE_KEY_ALIAS=miniledger
-MYAPP_RELEASE_KEY_PASSWORD=android
-EOF
+          MYAPP_RELEASE_STORE_FILE=release-key.keystore
+          MYAPP_RELEASE_STORE_PASSWORD=android
+          MYAPP_RELEASE_KEY_ALIAS=miniledger
+          MYAPP_RELEASE_KEY_PASSWORD=android
+          EOF
 
       - name: Add release signing config to build.gradle
         run: |
@@ -79,12 +79,12 @@ EOF
 
           # Add release signingConfig inside signingConfigs block
           release_block = '''    release {
-            storeFile file(MYAPP_RELEASE_STORE_FILE)
-            storePassword MYAPP_RELEASE_STORE_PASSWORD
-            keyAlias MYAPP_RELEASE_KEY_ALIAS
-            keyPassword MYAPP_RELEASE_KEY_PASSWORD
-        }
-'''
+                      storeFile file(MYAPP_RELEASE_STORE_FILE)
+                      storePassword MYAPP_RELEASE_STORE_PASSWORD
+                      keyAlias MYAPP_RELEASE_KEY_ALIAS
+                      keyPassword MYAPP_RELEASE_KEY_PASSWORD
+                  }
+          '''
           # Insert release config right after "signingConfigs {"
           content = content.replace(
               'signingConfigs {\n',
