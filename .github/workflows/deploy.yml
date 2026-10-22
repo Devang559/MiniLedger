@@ -33,7 +33,7 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v2
         with:
           api-level: 34
           build-tools: "34.0.0"
@@ -61,6 +61,8 @@ jobs:
 
       - name: Configure gradle.properties for signing
         run: |
+          # Ensure there is a newline at the end of the file before appending
+          echo "" >> Frontend/android/gradle.properties
           cat >> Frontend/android/gradle.properties << 'EOF'
           MYAPP_RELEASE_STORE_FILE=release-key.keystore
           MYAPP_RELEASE_STORE_PASSWORD=android
