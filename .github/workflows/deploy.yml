@@ -90,7 +90,7 @@ jobs:
                       keyAlias MYAPP_RELEASE_KEY_ALIAS
                       keyPassword MYAPP_RELEASE_KEY_PASSWORD
           }
-'''
+
           # Insert release config right after "signingConfigs {"
           if 'signingConfigs {\n' in content:
               content = content.replace(
