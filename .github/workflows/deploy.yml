@@ -76,43 +76,38 @@ jobs:
 
       - name: Add release signing config to build.gradle
         run: |
-          python3 << 'PYEOF'
+          cat > /tmp/modify_build.py << 'PYEOF'
           import re
 
           filepath = "Frontend/android/app/build.gradle"
           with open(filepath, "r") as f:
               content = f.read()
 
-          # Add release signingConfig inside signingConfigs block
-          release_block = '''    release {
+          release_block = """    release {
                       storeFile file(MYAPP_RELEASE_STORE_FILE)
                       storePassword MYAPP_RELEASE_STORE_PASSWORD
                       keyAlias MYAPP_RELEASE_KEY_ALIAS
                       keyPassword MYAPP_RELEASE_KEY_PASSWORD
           }
+          """
 
-          # Insert release config right after "signingConfigs {"
           if 'signingConfigs {\n' in content:
               content = content.replace(
                   'signingConfigs {\n',
                   'signingConfigs {\n' + release_block
               )
 
-          # Use regex to reliably switch release buildType to use release signingConfig
-          # This handles various formats: signingConfig signingConfigs.debug, signConfig signingConfigs.debug, etc.
           content = re.sub(
               r'(signingConfig\s+signingConfigs\.\w+)',
               'signingConfig signingConfigs.release',
               content
           )
 
-          # Enable minify and shrink resources
           content = content.replace(
               'minifyEnabled enableProguardInReleaseBuilds',
               'minifyEnabled true\n            shrinkResources true'
           )
 
-          # Ensure proguardFiles line is present
           if 'proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' not in content:
               content = content.replace(
                   'minifyEnabled true\n            shrinkResources true',
@@ -124,6 +119,7 @@ jobs:
 
           print("build.gradle updated successfully")
           PYEOF
+          python3 /tmp/modify_build.py
 
       - name: Verify signing config was applied
         run: |
