@@ -1,11 +1,29 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Modal, FlatList } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  Modal,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useAuthStore } from '../store/authStore';
 import { useLoanStore } from '../store/loanStore';
 import { useThemeStore } from '../store/themeStore';
 import { getCurrencyInfo, formatAmountInput, parseAmount } from '../utils/currency';
+import { api } from '../services/api';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { TurboModuleRegistry } from 'react-native';
+import { getColors } from '../theme';
+import Screen from '../components/Screen';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -61,12 +79,14 @@ export default function AddLoanScreen({ navigation }: AddLoanScreenProps) {
   const [dueDateStr, setDueDateStr] = useState('');
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [receiptFile, setReceiptFile] = useState<{ uri: string; name: string; type: string } | null>(null);
 
   const { isDark } = useThemeStore();
   const { user, countryCode } = useAuthStore();
   const { addLoan, fetchLoans, fetchSummary, isLoading, error, clearError } = useLoanStore();
 
   const styles = getStyles(isDark);
+  const colors = getColors(isDark);
 
   const handleSelectDate = (date: Date) => {
     const year = date.getFullYear();
@@ -162,9 +182,22 @@ export default function AddLoanScreen({ navigation }: AddLoanScreenProps) {
     }
 
     try {
-      await addLoan(user.id, friendName.trim(), parsedAmount, parsedDate.toISOString());
+      const result = await addLoan(user.id, friendName.trim(), parsedAmount, parsedDate.toISOString());
       await fetchLoans(user.id);
       await fetchSummary(user.id);
+
+      if (receiptFile) {
+        try {
+          const loanId = result?.loan?.id || useLoanStore.getState().loans[0]?.id;
+          if (loanId) {
+            await api.uploadReceipt(loanId, receiptFile);
+            await fetchLoans(user.id);
+          }
+        } catch (receiptErr: any) {
+          Alert.alert('Warning', 'Loan added but receipt upload failed: ' + receiptErr.message);
+        }
+      }
+
       Alert.alert('Success', 'Loan entry added', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
@@ -174,59 +207,112 @@ export default function AddLoanScreen({ navigation }: AddLoanScreenProps) {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Add Loan Entry</Text>
-      </View>
-
-      <Text style={styles.label}>👤 Friend's Name</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. Alice"
-        placeholderTextColor={isDark ? '#888' : '#999'}
-        value={friendName}
-        onChangeText={setFriendName}
-      />
-
-      <Text style={styles.label}>💵 Amount ({getCurrencyInfo(countryCode).symbol})</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="e.g. 1,500"
-        placeholderTextColor={isDark ? '#888' : '#999'}
-        value={amount}
-        onChangeText={(text) => setAmount(formatAmountInput(text, countryCode))}
-        keyboardType="numeric"
-      />
-
-      <Text style={styles.label}>📅 Due Date</Text>
-      <TouchableOpacity
-        style={styles.dateButton}
-        onPress={() => setDatePickerVisible(true)}
+    <Screen>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Text
-          style={[
-            styles.dateButtonText,
-            !dueDateStr && styles.dateButtonPlaceholderText,
-          ]}
+        <ScrollView
+          contentContainerStyle={styles.container}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {formatDateButton(dueDateStr)}
-        </Text>
-      </TouchableOpacity>
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backChip} onPress={() => navigation.goBack()}>
+              <Text style={styles.backButton}>← Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.title}>Add Loan Entry</Text>
+          </View>
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+          <View style={styles.card}>
+            <Text style={styles.label}>Friend's name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Alice"
+              placeholderTextColor={colors.textMuted}
+              value={friendName}
+              onChangeText={setFriendName}
+            />
 
-      <TouchableOpacity
-        style={[styles.button, isLoading && styles.buttonDisabled]}
-        onPress={handleAddLoan}
-        disabled={isLoading}
-      >
-        <Text style={styles.buttonText}>
-          {isLoading ? '⏳ Saving...' : '✚ Add Loan'}
-        </Text>
-      </TouchableOpacity>
+            <Text style={styles.label}>Amount ({getCurrencyInfo(countryCode).symbol})</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. 1,500"
+              placeholderTextColor={colors.textMuted}
+              value={amount}
+              onChangeText={(text) => setAmount(formatAmountInput(text, countryCode))}
+              keyboardType="numeric"
+            />
+
+            <Text style={styles.label}>Due date</Text>
+            <TouchableOpacity
+              style={styles.dateButton}
+              onPress={() => setDatePickerVisible(true)}
+            >
+              <Text
+                style={[
+                  styles.dateButtonText,
+                  !dueDateStr && styles.dateButtonPlaceholderText,
+                ]}
+              >
+                {formatDateButton(dueDateStr)}
+              </Text>
+            </TouchableOpacity>
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
+            <Text style={styles.label}>Receipt image (optional)</Text>
+            <TouchableOpacity
+              style={styles.receiptPickerButton}
+              onPress={async () => {
+                try {
+                  const module = TurboModuleRegistry.get('ImagePicker');
+                  if (!module) {
+                    Alert.alert('Error', 'Receipt picker requires APK rebuild. Run: cd Frontend && npx react-native run-android');
+                    return;
+                  }
+                  const result = await launchImageLibrary({
+                    mediaType: 'photo',
+                    quality: 0.8,
+                  });
+                  if (result.assets && result.assets.length > 0) {
+                    const asset = result.assets[0];
+                    setReceiptFile({
+                      uri: asset.uri || '',
+                      name: asset.fileName || 'receipt.jpg',
+                      type: asset.type || 'image/jpeg',
+                    });
+                  }
+                } catch (err: any) {
+                  Alert.alert('Error', err?.message || 'Failed to pick image');
+                }
+              }}
+            >
+              <Text style={styles.receiptPickerButtonText}>
+                {receiptFile ? 'Change receipt' : 'Choose receipt image'}
+              </Text>
+            </TouchableOpacity>
+
+            {receiptFile ? (
+              <Image
+                source={{ uri: receiptFile.uri }}
+                style={styles.receiptPreview}
+                resizeMode="cover"
+              />
+            ) : null}
+
+            <TouchableOpacity
+              style={[styles.button, isLoading && styles.buttonDisabled]}
+              onPress={handleAddLoan}
+              disabled={isLoading}
+            >
+              <Text style={styles.buttonText}>
+                {isLoading ? 'Saving...' : 'Add Loan'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal
         visible={datePickerVisible}
@@ -236,7 +322,7 @@ export default function AddLoanScreen({ navigation }: AddLoanScreenProps) {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>📅 Select Due Date</Text>
+            <Text style={styles.modalTitle}>Select due date</Text>
             <View style={styles.calendarHeader}>
               <TouchableOpacity onPress={prevMonth} style={styles.calendarNavButton}>
                 <Text style={styles.calendarNavText}>‹</Text>
@@ -267,127 +353,160 @@ export default function AddLoanScreen({ navigation }: AddLoanScreenProps) {
 
             <View style={styles.calendarFooter}>
               <TouchableOpacity style={styles.calendarFooterButton} onPress={handleClearDate}>
-                <Text style={styles.calendarFooterButtonText}>🗑 Clear</Text>
+                <Text style={styles.calendarFooterButtonText}>Clear</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.calendarFooterButton} onPress={handleToday}>
-                <Text style={styles.calendarFooterButtonText}>📅 Today</Text>
+                <Text style={styles.calendarFooterButtonText}>Today</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.calendarFooterButton, styles.calendarDoneButton]}
                 onPress={() => setDatePickerVisible(false)}
               >
-                <Text style={styles.calendarDoneButtonText}>✓ Done</Text>
+                <Text style={styles.calendarDoneButtonText}>Done</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-    </View>
+    </Screen>
   );
 }
 
 function getStyles(isDark: boolean) {
-  const colors = isDark
-    ? { bg: '#121212', text: '#ffffff', input: '#1e1e1e', border: '#333', error: '#ef4444', sub: '#888888', card: '#1e1e1e' }
-    : { bg: '#ffffff', text: '#1a1a1a', input: '#f5f5f5', border: '#e0e0e0', error: '#ef4444', sub: '#6b7280', card: '#ffffff' };
+  const colors = getColors(isDark);
 
   return StyleSheet.create({
-    container: {
+    flex: {
       flex: 1,
-      backgroundColor: colors.bg,
-      padding: 24,
-      paddingTop: 50,
+    },
+    container: {
+      padding: 20,
+      paddingBottom: 40,
     },
     header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 32,
+      marginBottom: 18,
+    },
+    backChip: {
+      alignSelf: 'flex-start',
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginBottom: 14,
     },
     backButton: {
-      color: '#6366f1',
-      fontSize: 16,
-      fontWeight: '600',
-      marginRight: 16,
+      color: colors.primary,
+      fontSize: 15,
+      fontWeight: '700',
     },
     title: {
-      fontSize: 24,
-      fontWeight: '700',
+      fontSize: 28,
+      fontWeight: '800',
       color: colors.text,
-      letterSpacing: -0.3,
+      letterSpacing: -0.5,
     },
-    label: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: colors.sub,
-      marginBottom: 6,
-      letterSpacing: 0.3,
-    },
-    input: {
-      backgroundColor: colors.input,
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 24,
+      padding: 20,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 12,
+    },
+    label: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textMuted,
+      marginBottom: 8,
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+    },
+    input: {
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 14,
       padding: 14,
       fontSize: 16,
       color: colors.text,
-      marginBottom: 20,
+      marginBottom: 18,
     },
     dateButton: {
-      backgroundColor: colors.input,
+      backgroundColor: colors.surfaceAlt,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 12,
+      borderRadius: 14,
       padding: 14,
-      marginBottom: 20,
+      marginBottom: 18,
       justifyContent: 'center',
     },
     dateButtonText: {
       fontSize: 16,
       color: colors.text,
+      fontWeight: '600',
     },
     dateButtonPlaceholderText: {
       fontSize: 16,
-      color: isDark ? '#888' : '#999',
+      color: colors.textMuted,
+      fontWeight: '400',
+    },
+    receiptPickerButton: {
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: colors.primary,
+      borderStyle: 'dashed',
+      borderRadius: 14,
+      padding: 16,
+      marginBottom: 18,
+      alignItems: 'center',
+    },
+    receiptPickerButtonText: {
+      fontSize: 15,
+      color: colors.primary,
+      fontWeight: '700',
+    },
+    receiptPreview: {
+      width: '100%',
+      height: 140,
+      borderRadius: 16,
+      marginBottom: 20,
+      backgroundColor: colors.surfaceAlt,
     },
     button: {
-      backgroundColor: '#6366f1',
+      backgroundColor: colors.primary,
       padding: 16,
-      borderRadius: 12,
+      borderRadius: 16,
       alignItems: 'center',
-      marginTop: 10,
+      marginTop: 4,
     },
     buttonDisabled: {
       opacity: 0.6,
     },
     buttonText: {
-      color: '#fff',
+      color: colors.onPrimary,
       fontSize: 16,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     error: {
-      color: colors.error,
+      color: colors.danger,
       fontSize: 14,
-      marginBottom: 8,
+      marginBottom: 12,
       textAlign: 'center',
-      fontWeight: '500',
+      fontWeight: '600',
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+      backgroundColor: colors.overlay,
       alignItems: 'center',
       justifyContent: 'center',
     },
     modalContent: {
-      borderRadius: 16,
+      borderRadius: 24,
       padding: 20,
       width: '90%',
-      maxHeight: '75%',
-      backgroundColor: colors.card,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.3,
-      shadowRadius: 16,
-      elevation: 8,
+      maxHeight: '80%',
+      backgroundColor: colors.surface,
     },
     calendarHeader: {
       flexDirection: 'row',
@@ -397,27 +516,27 @@ function getStyles(isDark: boolean) {
     },
     modalTitle: {
       fontSize: 18,
-      fontWeight: '600',
+      fontWeight: '700',
       marginBottom: 16,
       textAlign: 'center',
       color: colors.text,
     },
     calendarNavButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: colors.input,
+      backgroundColor: colors.surfaceAlt,
     },
     calendarNavText: {
-      fontSize: 20,
+      fontSize: 22,
       fontWeight: '600',
       color: colors.text,
     },
     calendarMonthYear: {
       fontSize: 16,
-      fontWeight: '600',
+      fontWeight: '700',
       color: colors.text,
     },
     dayNamesRow: {
@@ -427,8 +546,8 @@ function getStyles(isDark: boolean) {
     },
     dayNameText: {
       fontSize: 12,
-      fontWeight: '600',
-      color: colors.sub,
+      fontWeight: '700',
+      color: colors.textMuted,
       textAlign: 'center',
       width: `${100 / 7}%`,
     },
@@ -437,29 +556,30 @@ function getStyles(isDark: boolean) {
       height: 40,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 8,
+      borderRadius: 12,
       marginBottom: 4,
     },
     dateCellInactive: {
       opacity: 0.3,
     },
     dateCellSelected: {
-      backgroundColor: '#6366f1',
+      backgroundColor: colors.primary,
     },
     dateCellText: {
       fontSize: 14,
       color: colors.text,
+      fontWeight: '600',
     },
     dateCellInactiveText: {
       opacity: 0.3,
     },
     dateCellSelectedText: {
-      color: '#fff',
-      fontWeight: '600',
+      color: colors.onPrimary,
+      fontWeight: '700',
     },
     dateCellTodayText: {
-      fontWeight: '600',
-      color: '#6366f1',
+      fontWeight: '700',
+      color: colors.primary,
     },
     calendarFooter: {
       flexDirection: 'row',
@@ -469,21 +589,22 @@ function getStyles(isDark: boolean) {
     },
     calendarFooterButton: {
       flex: 1,
-      padding: 10,
-      borderRadius: 10,
+      padding: 12,
+      borderRadius: 12,
       alignItems: 'center',
-      backgroundColor: colors.input,
+      backgroundColor: colors.surfaceAlt,
     },
     calendarFooterButtonText: {
       fontSize: 14,
-      fontWeight: '600',
+      fontWeight: '700',
       color: colors.text,
     },
     calendarDoneButton: {
-      backgroundColor: '#6366f1',
+      backgroundColor: colors.primary,
     },
     calendarDoneButtonText: {
-      color: '#fff',
+      color: colors.onPrimary,
+      fontWeight: '700',
     },
   });
 }

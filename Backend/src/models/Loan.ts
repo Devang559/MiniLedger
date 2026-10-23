@@ -5,6 +5,7 @@ export interface Loan {
   amount: number;
   due_date: Date;
   is_repaid: boolean;
+  receipt_url: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -13,6 +14,7 @@ export interface CreateLoanInput {
   friend_name: string;
   amount: number;
   due_date: string;
+  receipt_url?: string | null;
 }
 
 export interface SummaryTable {

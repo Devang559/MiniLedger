@@ -15,13 +15,14 @@ export async function addLoan(
   user_id: string,
   friend_name: string,
   amount: number,
-  due_date: string
+  due_date: string,
+  receipt_url?: string | null
 ): Promise<AddLoanResponse> {
   const result = await pool.query<Loan>(
-    `INSERT INTO loans (user_id, friend_name, amount, due_date, is_repaid)
-     VALUES ($1, $2, $3, $4, FALSE)
+    `INSERT INTO loans (user_id, friend_name, amount, due_date, is_repaid, receipt_url)
+     VALUES ($1, $2, $3, $4, FALSE, $5)
      RETURNING *`,
-    [user_id, friend_name, amount, due_date]
+    [user_id, friend_name, amount, due_date, receipt_url || null]
   );
 
   const summary = await calculateSummary(user_id);
@@ -55,12 +56,13 @@ export async function updateLoan(
   loan_id: string,
   friend_name: string,
   amount: number,
-  due_date: string
+  due_date: string,
+  receipt_url?: string | null
 ): Promise<AddLoanResponse> {
   const result = await pool.query<Loan>(
-    `UPDATE loans SET friend_name = $1, amount = $2, due_date = $3, updated_at = NOW()
-     WHERE id = $4 RETURNING *`,
-    [friend_name, amount, due_date, loan_id]
+    `UPDATE loans SET friend_name = $1, amount = $2, due_date = $3, receipt_url = $4, updated_at = NOW()
+     WHERE id = $5 RETURNING *`,
+    [friend_name, amount, due_date, receipt_url || null, loan_id]
   );
 
   if (result.rowCount === 0) throw new Error('Loan not found');
@@ -95,4 +97,14 @@ export async function deleteLoan(loan_id: string): Promise<{ message: string }> 
   await upsertSummary(result.rows[0].user_id, summary);
 
   return { message: 'Loan deleted' };
+}
+
+export async function uploadReceipt(loan_id: string, receiptUrl: string): Promise<{ message: string; loan: Loan }> {
+  const result = await pool.query<Loan>(
+    'UPDATE loans SET receipt_url = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [receiptUrl, loan_id]
+  );
+  if (result.rowCount === 0) throw new Error('Loan not found');
+
+  return { message: 'Receipt uploaded', loan: result.rows[0] };
 }

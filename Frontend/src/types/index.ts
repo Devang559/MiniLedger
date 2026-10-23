@@ -11,6 +11,7 @@ export interface Loan {
   amount: number;
   due_date: string;
   is_repaid: boolean;
+  receipt_url: string | null;
   created_at: string;
   updated_at: string;
 }

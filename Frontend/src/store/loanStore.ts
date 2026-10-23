@@ -10,8 +10,8 @@ interface LoanState {
 
   fetchLoans: (user_id: string) => Promise<void>;
   fetchSummary: (user_id: string) => Promise<void>;
-  addLoan: (user_id: string, friend_name: string, amount: number, due_date: string) => Promise<void>;
-  updateLoan: (loan_id: string, user_id: string, friend_name: string, amount: number, due_date: string) => Promise<void>;
+  addLoan: (user_id: string, friend_name: string, amount: number, due_date: string) => Promise<{ message: string; loan: Loan }>;
+  updateLoan: (loan_id: string, user_id: string, friend_name: string, amount: number, due_date: string, receipt_url?: string | null) => Promise<void>;
   markRepaid: (loan_id: string, user_id: string) => Promise<void>;
   unmarkRepaid: (loan_id: string, user_id: string) => Promise<void>;
   deleteLoan: (loan_id: string, user_id: string) => Promise<void>;
@@ -47,12 +47,13 @@ export const useLoanStore = create<LoanState>((set, get) => ({
   addLoan: async (user_id, friend_name, amount, due_date) => {
     set({ isLoading: true, error: null });
     try {
-      await api.addLoan(user_id, friend_name, amount, due_date);
+      const result = await api.addLoan(user_id, friend_name, amount, due_date);
       const [loansRes, summaryRes] = await Promise.all([
         api.getLoans(user_id),
         api.getSummary(user_id),
       ]);
       set({ loans: loansRes.loans, summary: summaryRes, isLoading: false });
+      return result;
     } catch (err: any) {
       set({ error: err.message, isLoading: false });
       throw err;
@@ -73,13 +74,13 @@ export const useLoanStore = create<LoanState>((set, get) => ({
     }
   },
 
-  updateLoan: async (loan_id, user_id, friend_name, amount, due_date) => {
+  updateLoan: async (loan_id, user_id, friend_name, amount, due_date, receipt_url) => {
     set({ isLoading: true, error: null });
     try {
-      await api.updateLoan(loan_id, friend_name, amount, due_date);
+      await api.updateLoan(loan_id, friend_name, amount, due_date, receipt_url);
       const updatedLoans = get().loans.map((loan) =>
         loan.id === loan_id
-          ? { ...loan, friend_name, amount, due_date }
+          ? { ...loan, friend_name, amount, due_date, ...(receipt_url !== undefined ? { receipt_url: receipt_url || null } : {}) }
           : loan
       );
       const summaryRes = await api.getSummary(user_id);
@@ -118,3 +119,4 @@ export const useLoanStore = create<LoanState>((set, get) => ({
 
   clearError: () => set({ error: null }),
 }));
+

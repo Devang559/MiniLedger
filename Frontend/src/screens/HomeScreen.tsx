@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, StyleSheet, RefreshControl, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, StyleSheet, RefreshControl, Modal, TextInput, Alert, Image } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useAuthStore } from '../store/authStore';
@@ -7,9 +7,14 @@ import { useLoanStore } from '../store/loanStore';
 import { useThemeStore } from '../store/themeStore';
 import SummaryCard from '../components/SummaryCard';
 import ThemeToggle from '../components/ThemeToggle';
+import Screen from '../components/Screen';
 import { formatDueDate } from '../utils/formatDate';
 import { getCurrencyInfo, formatCurrency, formatAmountInput, parseAmount } from '../utils/currency';
+import { api, getReceiptImageUrl } from '../services/api';
 import { Loan } from '../types';
+import { launchImageLibrary } from 'react-native-image-picker';
+import { TurboModuleRegistry } from 'react-native';
+import { getColors } from '../theme';
 
 type HomeScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Home'>;
@@ -20,11 +25,15 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
   const { user, countryCode } = useAuthStore();
   const { loans, summary, isLoading, error, fetchLoans, fetchSummary, markRepaid, unmarkRepaid, deleteLoan, updateLoan, clearError } = useLoanStore();
 
+  const colors = getColors(isDark);
+
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
   const [editName, setEditName] = useState('');
   const [editAmount, setEditAmount] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
+  const [receiptModalVisible, setReceiptModalVisible] = useState(false);
+  const [selectedReceiptUrl, setSelectedReceiptUrl] = useState<string | null>(null);
 
   const styles = getStyles(isDark);
 
@@ -47,7 +56,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     return new Date(loan.due_date) < new Date();
   };
 
-  const         openEditModal = (loan: Loan) => {
+  const openEditModal = (loan: Loan) => {
     setEditingLoan(loan);
     setEditName(loan.friend_name);
     setEditAmount(formatAmountInput(String(loan.amount), countryCode));
@@ -81,7 +90,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     }
 
     try {
-      await updateLoan(editingLoan.id, user.id, editName.trim(), parsedAmount, editDueDate);
+      await updateLoan(editingLoan.id, user.id, editName.trim(), parsedAmount, editDueDate, editingLoan?.receipt_url || null);
       setEditModalVisible(false);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'Failed to update loan');
@@ -90,6 +99,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
   const renderLoan = ({ item }: { item: Loan }) => {
     const overdue = isOverdue(item);
+    const initial = item.friend_name.trim().charAt(0).toUpperCase() || '?';
 
     return (
       <View style={[styles.loanItem, overdue && styles.loanItemOverdue, item.is_repaid && styles.loanItemRepaid]}>
@@ -97,31 +107,86 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
           style={styles.loanInfo}
           onPress={() => openEditModal(item)}
         >
-          <Text style={styles.friendName}>{item.friend_name}</Text>
-          <Text style={styles.dueDate}>{formatDueDate(item.due_date)}</Text>
-          <Text style={[styles.amountText, overdue && styles.amountOverdue]}>{formatCurrency(item.amount, countryCode)}</Text>
+          <View style={styles.loanTop}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initial}</Text>
+            </View>
+            <View style={styles.loanCopy}>
+              <Text style={styles.friendName}>{item.friend_name}</Text>
+              <Text style={styles.dueDate}>{formatDueDate(item.due_date)}</Text>
+            </View>
+            <Text style={[styles.amountText, overdue && styles.amountOverdue]}>{formatCurrency(item.amount, countryCode)}</Text>
+          </View>
         </TouchableOpacity>
         <View style={styles.loanMeta}>
           <View style={[styles.statusBadge, item.is_repaid ? styles.statusBadgeRepaid : overdue ? styles.statusBadgeOverdue : styles.statusBadgePending]}>
             <Text style={[styles.statusText, item.is_repaid ? styles.statusRepaid : overdue ? styles.statusOverdue : styles.statusPending]}>
-              {item.is_repaid ? '✓ Repaid' : overdue ? '⚠︎ Overdue' : '⏳ Pending'}
+              {item.is_repaid ? 'Repaid' : overdue ? 'Overdue' : 'Pending'}
             </Text>
           </View>
-          {!item.is_repaid && user && (
-            <TouchableOpacity
-              style={styles.repayButton}
-              onPress={() => markRepaid(item.id, user.id)}
-            >
-                <Text style={styles.repayButtonText}>✓ Mark Repaid</Text>
-            </TouchableOpacity>
-          )}
+            {!item.is_repaid && user && (
+              <TouchableOpacity
+                style={styles.repayButton}
+                onPress={() => markRepaid(item.id, user.id)}
+              >
+                <Text style={styles.repayButtonText}>Mark repaid</Text>
+              </TouchableOpacity>
+            )}
+            {item.receipt_url && (
+              <TouchableOpacity
+                style={styles.receiptButton}
+                onPress={() => {
+                  setSelectedReceiptUrl(getReceiptImageUrl(item.receipt_url));
+                  setReceiptModalVisible(true);
+                }}
+              >
+                <Text style={styles.receiptButtonText}>Show receipt</Text>
+              </TouchableOpacity>
+            )}
+            {!item.receipt_url && user && (
+              <TouchableOpacity
+                style={styles.receiptButton}
+                onPress={async () => {
+                  try {
+                    const module = TurboModuleRegistry.get('ImagePicker');
+                    if (!module) {
+                      Alert.alert('Error', 'Receipt picker requires APK rebuild. Run: cd Frontend && npx react-native run-android');
+                      return;
+                    }
+                    const result = await launchImageLibrary({
+                      mediaType: 'photo',
+                      quality: 0.8,
+                    });
+                    if (result.assets && result.assets.length > 0) {
+                      const asset = result.assets[0];
+                      const res = await api.uploadReceipt(item.id, {
+                        uri: asset.uri || '',
+                        name: asset.fileName || 'receipt.jpg',
+                        type: asset.type || 'image/jpeg',
+                      });
+                      if (res.loan && res.loan.receipt_url) {
+                        const updatedLoans = loans.map((loan: Loan) =>
+                          loan.id === item.id ? { ...loan, receipt_url: res.loan.receipt_url } : loan
+                        );
+                        useLoanStore.setState({ loans: updatedLoans });
+                      }
+                      Alert.alert('Success', 'Receipt uploaded');
+                    }
+                  } catch (err: any) {
+                    Alert.alert('Error', err?.message || 'Failed to upload receipt');
+                  }
+                }}
+              >
+                <Text style={styles.receiptButtonText}>Upload receipt</Text>
+              </TouchableOpacity>
+            )}
           {item.is_repaid && user && (
             <View style={styles.repaidActions}>
               <TouchableOpacity
                 style={styles.undoButton}
                 onPress={() => unmarkRepaid(item.id, user.id)}
               >
-                <Text style={styles.undoButtonText}>↩︎ Undo</Text>
+                <Text style={styles.undoButtonText}>Undo</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.deleteButton}
@@ -140,7 +205,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                   )
                 }
               >
-                <Text style={styles.deleteButtonText}>🗑 Delete</Text>
+                <Text style={styles.deleteButtonText}>Delete</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -154,28 +219,35 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>✏︎ Edit Loan</Text>
-              <Text style={styles.modalLabel}>👤 Friend's Name</Text>
+              <Text style={styles.modalTitle}>Edit loan</Text>
+              <Text style={styles.modalLabel}>Friend's name</Text>
               <TextInput
                 style={styles.modalInput}
                 value={editName}
                 onChangeText={setEditName}
               />
-              <Text style={styles.modalLabel}>💵 Amount ({getCurrencyInfo(countryCode).symbol})</Text>
+              <Text style={styles.modalLabel}>Amount ({getCurrencyInfo(countryCode).symbol})</Text>
               <TextInput
                 style={styles.modalInput}
                 value={editAmount}
                 onChangeText={(text) => setEditAmount(formatAmountInput(text, countryCode))}
                 keyboardType="numeric"
               />
-              <Text style={styles.modalLabel}>📅 Due Date</Text>
+              <Text style={styles.modalLabel}>Due date</Text>
               <TextInput
                 style={styles.modalInput}
                 value={editDueDate}
                 onChangeText={setEditDueDate}
                 placeholder="e.g. 2026-10-25 or 2026-10-25T14:00:00Z"
-                placeholderTextColor={isDark ? '#888' : '#999'}
+                placeholderTextColor={colors.textMuted}
               />
+              {editingLoan?.receipt_url ? (
+                <Image
+                  source={{ uri: getReceiptImageUrl(editingLoan.receipt_url) || '' }}
+                  style={{ width: '100%', height: 100, borderRadius: 12, marginBottom: 20 }}
+                  resizeMode="cover"
+                />
+              ) : null}
               <View style={styles.modalButtons}>
                 <TouchableOpacity
                   style={styles.modalButtonSave}
@@ -187,7 +259,41 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                   style={styles.modalButtonCancel}
                   onPress={() => setEditModalVisible(false)}
                 >
-                  <Text style={styles.modalButtonText}>Cancel</Text>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={receiptModalVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setReceiptModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { padding: 24, maxHeight: '80%' }]}>
+              <Text style={styles.modalTitle}>Receipt</Text>
+              {selectedReceiptUrl ? (
+                <Image
+                  source={{ uri: selectedReceiptUrl }}
+                  style={{ width: '100%', height: 300, borderRadius: 12 }}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={{ alignItems: 'center', padding: 20 }}>
+                  <Text style={{ color: colors.textMuted, marginBottom: 12 }}>
+                    No receipt image.
+                  </Text>
+                </View>
+              )}
+              <View style={[styles.modalButtons, { marginTop: 20 }]}>
+                <TouchableOpacity
+                  style={styles.modalButtonCancel}
+                  onPress={() => setReceiptModalVisible(false)}
+                >
+                  <Text style={styles.modalButtonCancelText}>Close</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -198,15 +304,20 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
   };
 
   return (
-    <View style={styles.container}>
+    <Screen style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>MiniLedger</Text>
+        <View style={styles.headerCopy}>
+          <Text style={styles.headerEyebrow}>MiniLedger</Text>
+          <Text style={styles.headerTitle}>
+            {user?.username ? `Hi, ${user.username}` : 'Your loans'}
+          </Text>
+        </View>
         <ThemeToggle />
       </View>
 
       {error ? (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>⚠ {error}</Text>
+          <Text style={styles.errorBannerText}>{error}</Text>
           <TouchableOpacity onPress={clearError}>
             <Text style={styles.errorBannerClose}>✕</Text>
           </TouchableOpacity>
@@ -219,47 +330,59 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         style={styles.addButton}
         onPress={() => navigation.navigate('AddLoan')}
       >
-        <Text style={styles.addButtonText}>✚ Add Loan</Text>
+        <Text style={styles.addButtonText}>Add loan</Text>
       </TouchableOpacity>
 
-      <Text style={styles.sectionTitle}>📋 Your Loans</Text>
+      <Text style={styles.sectionTitle}>Your loans</Text>
       <FlatList
         data={loans}
         renderItem={renderLoan}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl onRefresh={onRefresh} refreshing={isLoading} />}
+        refreshControl={<RefreshControl onRefresh={onRefresh} refreshing={isLoading} tintColor={colors.primary} />}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           isLoading ? (
-            <Text style={styles.emptyText}>⏳ Loading loans...</Text>
+            <Text style={styles.emptyText}>Loading loans...</Text>
           ) : (
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>📄 No loans yet</Text>
-              <Text style={styles.emptySubtext}>Tap "✚ Add Loan" to get started</Text>
+              <View style={styles.emptyIcon}>
+                <Text style={styles.emptyIconText}>ML</Text>
+              </View>
+              <Text style={styles.emptyText}>No loans yet</Text>
+              <Text style={styles.emptySubtext}>Tap “Add loan” to get started</Text>
             </View>
           )
         }
       />
-    </View>
+    </Screen>
   );
 }
 
 function getStyles(isDark: boolean) {
-  const colors = isDark
-    ? { bg: '#121212', text: '#ffffff', card: '#1e1e1e', border: '#333', sub: '#888888' }
-    : { bg: '#f5f5f5', text: '#1a1a1a', card: '#fff', border: '#e0e0e0', sub: '#6b7280' };
+  const colors = getColors(isDark);
 
   return StyleSheet.create({
     container: {
-      flex: 1,
-      backgroundColor: colors.bg,
-      padding: 24,
+      paddingHorizontal: 20,
+      paddingTop: 8,
     },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 24,
+      marginBottom: 20,
+    },
+    headerCopy: {
+      flex: 1,
+      paddingRight: 12,
+    },
+    headerEyebrow: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.primary,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      marginBottom: 4,
     },
     headerTitle: {
       fontSize: 26,
@@ -268,232 +391,257 @@ function getStyles(isDark: boolean) {
       letterSpacing: -0.5,
     },
     errorBanner: {
-      backgroundColor: '#fef2f2',
-      borderColor: '#fecaca',
+      backgroundColor: colors.dangerMuted,
+      borderColor: colors.danger,
       borderWidth: 1,
-      borderRadius: 12,
+      borderRadius: 14,
       paddingHorizontal: 14,
-      paddingVertical: 10,
+      paddingVertical: 12,
       marginBottom: 16,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
     },
     errorBannerText: {
-      color: '#991b1b',
+      color: colors.danger,
       fontSize: 13,
       flex: 1,
+      fontWeight: '600',
     },
     errorBannerClose: {
-      color: '#991b1b',
+      color: colors.danger,
       fontSize: 16,
-      fontWeight: '600',
+      fontWeight: '700',
       paddingLeft: 12,
     },
     addButton: {
-      backgroundColor: '#6366f1',
-      padding: 14,
-      borderRadius: 12,
+      backgroundColor: colors.primary,
+      padding: 16,
+      borderRadius: 16,
       alignItems: 'center',
       marginBottom: 20,
-      shadowColor: '#6366f1',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDark ? 0.3 : 0.25,
-      shadowRadius: 8,
-      elevation: 4,
     },
     addButtonText: {
-      color: '#fff',
+      color: colors.onPrimary,
       fontSize: 16,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     sectionTitle: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: colors.sub,
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textMuted,
       marginBottom: 12,
       textTransform: 'uppercase',
-      letterSpacing: 0.5,
+      letterSpacing: 0.8,
     },
     loanItem: {
-      backgroundColor: colors.card,
-      borderRadius: 16,
-      padding: 18,
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      padding: 16,
       marginBottom: 12,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: isDark ? 0.3 : 0.06,
-      shadowRadius: 6,
-      elevation: 2,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     loanItemOverdue: {
-      borderLeftWidth: 3,
-      borderLeftColor: '#ef4444',
+      borderColor: colors.danger,
     },
     loanItemRepaid: {
-      opacity: 0.6,
+      opacity: 0.72,
     },
     loanInfo: {
+      marginBottom: 12,
+    },
+    loanTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    avatar: {
+      width: 42,
+      height: 42,
+      borderRadius: 14,
+      backgroundColor: colors.primaryMuted,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 12,
+    },
+    avatarText: {
+      color: isDark ? colors.primary : colors.primary,
+      fontSize: 16,
+      fontWeight: '800',
+    },
+    loanCopy: {
       flex: 1,
-      marginBottom: 8,
     },
     friendName: {
-      fontSize: 17,
-      fontWeight: '600',
+      fontSize: 16,
+      fontWeight: '700',
       color: colors.text,
     },
     dueDate: {
       fontSize: 12,
-      color: colors.sub,
+      color: colors.textMuted,
       marginTop: 4,
     },
     amountText: {
-      fontSize: 20,
-      fontWeight: '700',
+      fontSize: 18,
+      fontWeight: '800',
       color: colors.text,
+      marginLeft: 8,
     },
     amountOverdue: {
-      color: '#ef4444',
+      color: colors.danger,
     },
     loanMeta: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      flexWrap: 'wrap',
       alignItems: 'center',
-      marginTop: 8,
+      gap: 8,
     },
     statusBadge: {
       paddingHorizontal: 10,
-      paddingVertical: 4,
+      paddingVertical: 6,
       borderRadius: 20,
     },
     statusBadgePending: {
-      backgroundColor: '#fef3c7',
+      backgroundColor: colors.warningMuted,
     },
     statusBadgeOverdue: {
-      backgroundColor: '#fee2e2',
+      backgroundColor: colors.dangerMuted,
     },
     statusBadgeRepaid: {
-      backgroundColor: '#dcfce7',
+      backgroundColor: colors.successMuted,
     },
     statusText: {
       fontSize: 11,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     statusPending: {
-      color: '#92400e',
+      color: colors.warning,
     },
     statusOverdue: {
-      color: '#991b1b',
+      color: colors.danger,
     },
     statusRepaid: {
-      color: '#166534',
+      color: colors.success,
     },
     repayButton: {
-      backgroundColor: '#22c55e',
+      backgroundColor: colors.success,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 10,
-      marginLeft: 10,
-      shadowColor: '#22c55e',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: isDark ? 0.3 : 0.2,
-      shadowRadius: 4,
-      elevation: 2,
+      borderRadius: 12,
     },
     repayButtonText: {
-      color: '#fff',
+      color: '#042F2E',
       fontSize: 12,
-      fontWeight: '600',
+      fontWeight: '700',
+    },
+    receiptButton: {
+      backgroundColor: colors.primaryMuted,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 12,
+    },
+    receiptButtonText: {
+      color: isDark ? colors.primary : colors.primary,
+      fontSize: 12,
+      fontWeight: '700',
     },
     repaidActions: {
       flexDirection: 'row',
       gap: 8,
-      marginLeft: 10,
     },
     undoButton: {
-      backgroundColor: '#f59e0b',
+      backgroundColor: colors.warningMuted,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 10,
+      borderRadius: 12,
     },
     undoButtonText: {
-      color: '#fff',
+      color: colors.warning,
       fontSize: 12,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     deleteButton: {
-      backgroundColor: '#ef4444',
+      backgroundColor: colors.dangerMuted,
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 10,
+      borderRadius: 12,
     },
     deleteButtonText: {
-      color: '#fff',
+      color: colors.danger,
       fontSize: 12,
-      fontWeight: '600',
+      fontWeight: '700',
     },
     emptyContainer: {
       alignItems: 'center',
-      marginTop: 60,
+      marginTop: 48,
+    },
+    emptyIcon: {
+      width: 64,
+      height: 64,
+      borderRadius: 20,
+      backgroundColor: colors.primaryMuted,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 12,
+    },
+    emptyIconText: {
+      color: colors.primary,
+      fontWeight: '800',
+      fontSize: 18,
     },
     emptyText: {
       textAlign: 'center',
-      color: colors.sub,
-      marginTop: 20,
+      color: colors.text,
+      marginTop: 8,
       fontSize: 16,
-      fontWeight: '500',
+      fontWeight: '700',
     },
     emptySubtext: {
       textAlign: 'center',
-      color: colors.sub,
+      color: colors.textMuted,
       fontSize: 13,
       marginTop: 8,
-      opacity: 0.7,
     },
     listContent: {
-      paddingBottom: 20,
+      paddingBottom: 32,
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+      backgroundColor: colors.overlay,
       alignItems: 'center',
       justifyContent: 'center',
     },
     modalContent: {
-      borderRadius: 16,
+      borderRadius: 24,
       padding: 20,
-      width: '85%',
+      width: '88%',
       maxHeight: '70%',
-      backgroundColor: colors.card,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.3,
-      shadowRadius: 16,
-      elevation: 8,
+      backgroundColor: colors.surface,
     },
     modalTitle: {
-      fontSize: 18,
-      fontWeight: '600',
+      fontSize: 20,
+      fontWeight: '800',
       marginBottom: 16,
-      textAlign: 'center',
       color: colors.text,
     },
     modalLabel: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: colors.sub,
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textMuted,
       marginBottom: 6,
-      letterSpacing: 0.3,
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
     },
     modalInput: {
       borderWidth: 1,
-      borderRadius: 12,
+      borderRadius: 14,
       padding: 14,
       fontSize: 16,
-      marginBottom: 20,
+      marginBottom: 16,
       borderColor: colors.border,
       color: colors.text,
-      backgroundColor: isDark ? '#2a2a2a' : '#f5f5f5',
+      backgroundColor: colors.surfaceAlt,
     },
     modalButtons: {
       flexDirection: 'row',
@@ -503,21 +651,26 @@ function getStyles(isDark: boolean) {
     modalButtonSave: {
       flex: 1,
       padding: 14,
-      borderRadius: 12,
+      borderRadius: 14,
       alignItems: 'center',
-      backgroundColor: '#6366f1',
+      backgroundColor: colors.primary,
     },
     modalButtonCancel: {
       flex: 1,
       padding: 14,
-      borderRadius: 12,
+      borderRadius: 14,
       alignItems: 'center',
-      backgroundColor: '#ef4444',
+      backgroundColor: colors.dangerMuted,
     },
     modalButtonText: {
-      color: '#fff',
+      color: colors.onPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontWeight: '700',
+    },
+    modalButtonCancelText: {
+      color: colors.danger,
+      fontSize: 15,
+      fontWeight: '700',
     },
   });
 }

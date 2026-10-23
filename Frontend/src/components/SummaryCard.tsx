@@ -4,6 +4,7 @@ import { Summary } from '../types';
 import { useThemeStore } from '../store/themeStore';
 import { useAuthStore } from '../store/authStore';
 import { formatCurrency } from '../utils/currency';
+import { getColors } from '../theme';
 
 interface SummaryCardProps {
   summary: Summary;
@@ -12,37 +13,30 @@ interface SummaryCardProps {
 export default function SummaryCard({ summary }: SummaryCardProps) {
   const { isDark } = useThemeStore();
   const { countryCode } = useAuthStore();
+  const colors = getColors(isDark);
   const styles = getStyles(isDark);
 
   return (
     <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardIcon}>📊</Text>
-        <Text style={styles.cardTitle}>Summary</Text>
+      <View style={styles.hero}>
+        <Text style={styles.heroLabel}>Total lent</Text>
+        <Text style={styles.heroValue}>{formatCurrency(summary.total_lent, countryCode)}</Text>
+        <Text style={styles.heroHint}>{summary.total_entries} loan {summary.total_entries === 1 ? 'entry' : 'entries'}</Text>
       </View>
       <View style={styles.row}>
-        <View style={styles.metric}>
-          <Text style={styles.metricIcon}>💰</Text>
-          <Text style={styles.metricValue}>{formatCurrency(summary.total_lent, countryCode)}</Text>
-          <Text style={styles.metricLabel}>Total Lent</Text>
+        <View style={[styles.metric, { backgroundColor: colors.successMuted }]}>
+          <Text style={[styles.metricLabel, { color: colors.success }]}>Repaid</Text>
+          <Text style={[styles.metricValue, { color: colors.success }]}>
+            {formatCurrency(summary.total_repaid, countryCode)}
+          </Text>
         </View>
-        <View style={styles.metric}>
-          <Text style={styles.metricIcon}>✓</Text>
-          <Text style={styles.metricValue}>{formatCurrency(summary.total_repaid, countryCode)}</Text>
-          <Text style={styles.metricLabel}>Total Repaid</Text>
-        </View>
-      </View>
-      <View style={styles.divider} />
-      <View style={styles.row}>
-        <View style={styles.metric}>
-          <Text style={styles.metricIcon}>⚠︎</Text>
-          <Text style={[styles.metricValue, styles.overdueValue]}>{formatCurrency(summary.overdue_amount, countryCode)}</Text>
-          <Text style={styles.metricLabel}>Overdue</Text>
-        </View>
-        <View style={styles.metric}>
-          <Text style={styles.metricIcon}>📋</Text>
-          <Text style={styles.metricValue}>{summary.total_entries}</Text>
-          <Text style={styles.metricLabel}>Total Entries</Text>
+        <View style={[styles.metric, { backgroundColor: colors.dangerMuted }]}>
+          <Text style={[styles.metricLabel, { color: colors.danger }]}>
+            Overdue{summary.overdue_count ? ` · ${summary.overdue_count}` : ''}
+          </Text>
+          <Text style={[styles.metricValue, { color: colors.danger }]}>
+            {formatCurrency(summary.overdue_amount, countryCode)}
+          </Text>
         </View>
       </View>
     </View>
@@ -50,70 +44,67 @@ export default function SummaryCard({ summary }: SummaryCardProps) {
 }
 
 function getStyles(isDark: boolean) {
-  const colors = isDark
-    ? { bg: '#1e1e1e', text: '#ffffff', sub: '#888888', border: '#2a2a2a' }
-    : { bg: '#fff', text: '#1a1a1a', sub: '#6b7280', border: '#e0e0e0' };
+  const colors = getColors(isDark);
 
   return StyleSheet.create({
     card: {
-      backgroundColor: colors.bg,
-      borderRadius: 16,
-      padding: 20,
+      backgroundColor: colors.surface,
+      borderRadius: 24,
+      padding: 8,
       marginBottom: 20,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDark ? 0.3 : 0.08,
-      shadowRadius: 10,
-      elevation: 3,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.28 : 0.08,
+      shadowRadius: 16,
+      elevation: 4,
     },
-    cardHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 16,
+    hero: {
+      backgroundColor: isDark ? colors.surfaceAlt : colors.primary,
+      borderRadius: 18,
+      paddingVertical: 20,
+      paddingHorizontal: 20,
+      marginBottom: 8,
     },
-    cardIcon: {
-      fontSize: 20,
-      marginRight: 8,
-    },
-    cardTitle: {
+    heroLabel: {
       fontSize: 13,
       fontWeight: '600',
-      color: colors.sub,
-      marginBottom: 16,
+      color: isDark ? colors.textMuted : 'rgba(255,255,255,0.78)',
+      letterSpacing: 0.4,
       textTransform: 'uppercase',
-      letterSpacing: 0.5,
+    },
+    heroValue: {
+      fontSize: 32,
+      fontWeight: '800',
+      color: isDark ? colors.primary : '#FFFFFF',
+      letterSpacing: -0.8,
+      marginTop: 6,
+    },
+    heroHint: {
+      marginTop: 6,
+      fontSize: 13,
+      color: isDark ? colors.textMuted : 'rgba(255,255,255,0.72)',
     },
     row: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 12,
-    },
-    divider: {
-      height: 1,
-      backgroundColor: colors.border,
-      marginVertical: 8,
+      gap: 8,
     },
     metric: {
       flex: 1,
-      alignItems: 'center',
-      paddingVertical: 6,
-    },
-    metricIcon: {
-      fontSize: 18,
-      marginBottom: 2,
-    },
-    metricValue: {
-      fontSize: 22,
-      fontWeight: '700',
-      color: colors.text,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 14,
     },
     metricLabel: {
       fontSize: 12,
-      color: colors.sub,
-      marginTop: 4,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+      marginBottom: 6,
     },
-    overdueValue: {
-      color: '#ef4444',
+    metricValue: {
+      fontSize: 16,
+      fontWeight: '700',
     },
   });
 }

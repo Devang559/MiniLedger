@@ -16,8 +16,8 @@ interface AuthState {
   isHydrating: boolean;
   error: string | null;
 
-  login: (phone_number: string, username?: string, country_code?: string) => Promise<void>;
-  verify: (phone_number: string, otp: string) => Promise<void>;
+  login: (phone_number: string, username?: string, country_code?: string) => Promise<boolean>;
+  verify: (phone_number: string, otp: string) => Promise<boolean>;
   logout: () => void;
   hydrate: () => Promise<void>;
   clearError: () => void;
@@ -39,8 +39,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         await AsyncStorage.setItem(COUNTRY_CODE_KEY, country_code);
       }
       set({ otp: response.otp, countryCode: country_code || null, isLoading: false });
+      return true;
     } catch (err: any) {
       set({ error: err.message, isLoading: false });
+      return false;
     }
   },
 
@@ -52,8 +54,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(response.user));
       await AsyncStorage.setItem(EXPIRY_KEY, expiry.toString());
       set({ user: response.user, otp: null, isLoading: false });
+      return true;
     } catch (err: any) {
       set({ error: err.message, isLoading: false });
+      return false;
     }
   },
 
